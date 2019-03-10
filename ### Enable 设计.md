@@ -175,17 +175,22 @@ public class HystrixCommandAspect {
     @Around("hystrixCommandAnnotationPointcut() || hystrixCollapserAnnotationPointcut()")
     public Object methodsAnnotatedWithHystrixCommand(final ProceedingJoinPoint joinPoint) throws Throwable {
         
-         MetaHolderFactory metaHolderFactory = META_HOLDER_FACTORY_MAP.get(HystrixPointcutType.of(method));//拿到初始化好的工厂类 CollapserMetaHolderFactory 或者是 CommandMetaHolderFactory
+         MetaHolderFactory metaHolderFactory = META_HOLDER_FACTORY_MAP.get(HystrixPointcutType.of(method));
+        //拿到初始化好的工厂类 CollapserMetaHolderFactory 或者是 CommandMetaHolderFactory
         MetaHolder metaHolder = metaHolderFactory.create(joinPoint);//创建定义到注解的元信息
         HystrixInvokable invokable = HystrixCommandFactory.getInstance().create(metaHolder);
         ExecutionType executionType = metaHolder.isCollapserAnnotationPresent() ；
-                metaHolder.getCollapserExecutionType() : metaHolder.getExecutionType();//拿到方法的执行方式 分别有 ASYNCHRONOUS, SYNCHRONOUS,OBSERVABLE;
+                metaHolder.getCollapserExecutionType() : metaHolder.getExecutionType();
+        //拿到方法的执行方式 分别有 ASYNCHRONOUS, SYNCHRONOUS,OBSERVABLE;
         result = CommandExecutor.execute(invokable, executionType, metaHolder); 
-||		 根据执行方式选择上下其中之一
-        	castToExecutable(invokable, executionType).execute();//先把可调用的，转换成可执行的 再执行进入到HystrixCommand的execute()
+||		//根据执行方式选择上下其中之一
+        	castToExecutable(invokable, executionType).execute();
+        //先把可调用的，转换成可执行的 再执行进入到HystrixCommand的execute()
 				queue().
-                	Future<R> delegate = toObservable().toBlocking().toFuture();//command转成一个RxJava可观察的Observable 返回一个Future对象，实际上使用Future的方式包装了 Observable （RxJava）有关
-        		get();//调用Future的get() 方法
+                	Future<R> delegate = toObservable().toBlocking().toFuture();
+        			//command转成一个RxJava可观察的Observable 返回一个Future对象，
+        			//实际上使用Future的方式包装了 Observable （RxJava）有关
+        		get();//调用Future的get() 方法 也就是调用 Observable.get()方法。
 		result = executeObservable(invokable, executionType, metaHolder);
   
         
@@ -199,62 +204,55 @@ Hystrix 动态化配置
 import com.netflix.config.ConfigurationManager;
 import com.netflix.hystrix.contrib.javanica.annotation.HystrixCommand;
 import com.netflix.hystrix.contrib.javanica.annotation.HystrixProperty;
-import com.segumentfault.spring.cloud.lesson8.api.UserService;
-import com.segumentfault.spring.cloud.lesson8.domain.User;
 import org.apache.commons.configuration.AbstractConfiguration;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Random;
+import java.util.*;
 
-/**
- * 用户服务提供方 Controller
- *
- * @author <a href="mailto:mercyblitz@gmail.com">Mercy</a>
- * @since 0.0.1
- */
+
 @RestController
-public class UserServiceProviderController {
+public class HytrixDynamicPropertiesController {
 
     @Autowired
-    private UserService userService;
+    private static Map map= new HashMap<>();
 
     private final static Random random = new Random();
 
-    @PostMapping("/user/save")
-    public boolean saveUser(@RequestBody User user) {
-        return userService.saveUser(user);
+    @PostMapping("/save")
+    public String save(String key,String value) {
+        map.put(key,value);
+        return map.toString();
     }
 
     @GetMapping("/change")
     public String changeTheHystrixCommandProperties(int timeOut){
-        String commandKey = "getUsers"; // must fit to the used key
+        String commandKey = "getMap"; // must fit to the used key
         String prefix = "hystrix.command." + commandKey + ".";
         AbstractConfiguration config = ConfigurationManager.getConfigInstance();
         System.out.println("timeOut="+timeOut);
         config.setProperty(prefix + "execution.isolation.thread.timeoutInMilliseconds", timeOut);
         return "OK";
     }
+
     /**
-     * 获取所有用户列表
+     * 获取键值对
      *
      * @return
      */
     @HystrixCommand(
-            commandProperties = { // Command 配置
+            commandProperties = {
+                    // Command 配置
                     // 设置操作时间为 100 毫秒
                     @HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "100")
             },
-            commandKey="getUsers",
-            fallbackMethod = "fallbackForGetUsers" // 设置 fallback 方法
+            commandKey="getMap",
+            fallbackMethod = "fallbackGetMap" // 设置 fallback 方法
     )
-    @GetMapping("/user/list")
-    public Collection<User> getUsers() throws InterruptedException {
+    @GetMapping("/map")
+    public String  getMap() throws InterruptedException {
 
         long executeTime = random.nextInt(200);
 
@@ -263,27 +261,75 @@ public class UserServiceProviderController {
 
         Thread.sleep(executeTime);
 
-        return userService.findAll();
+        return map.toString();
     }
 
     /**
-     * {@link #getUsers()} 的 fallback 方法
+     * {@link #getMap()} 的 fallback 方法
      *
-     * @return 空集合
+     * @return 说明
      */
-    public Collection<User> fallbackForGetUsers() {
-        return Collections.emptyList();
+    public String fallbackGetMap() {
+        return "失败调用";
     }
 
 }
 
 ```
 
+TestHytrixDynamicPropertiesApplication.java
+
+```
+@SpringBootApplication
+@EnableHystrix
+public class TestHytrixDynamicPropertiesApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(TestHytrixDynamicPropertiesApplication.class, args);
+    }
+}
+
+```
+
+先保存
+
+```shell
+curl -X POST \
+  http://127.0.0.1:9090/save \
+  -H 'cache-control: no-cache' \
+  -H 'content-type: application/x-www-form-urlencoded' \
+  -d 'key=aaa&value=bbb'
+```
+
+多次测试
+
+```shell
+curl -X GET \
+  http://127.0.0.1:9090/map
+```
+
+设置超时时间
+
+```shell
+curl -X GET \
+  'http://127.0.0.1:9090/change?timeOut=10' \
+```
+
+
+
+
+
+其中动态改的配置貌似都能在
+
 http://localhost:9090/archaius
+
+这里看到
 
 可以获得更改后的配置
 
 疑问：1.Hystrix 如何在调用时候从ConfigurationManager获取到属于当前的timeout值。
+
+以为：2.档timeout设置为0的时候不会进入
 
 
 
