@@ -379,9 +379,50 @@ methodsAnnotatedWithHystrixCommand(final ProceedingJoinPoint joinPoint)
                
 			
 	result = CommandExecutor.execute(invokable, executionType, metaHolder);
-		castToExecutable(invokable, executionType).execute();//先把可调用的，转换成可执行的在执行进入到HystrixCommand的execute()
+//这个Future 通过Observable.toBlocking().toFuture()没有实现
+// interruption 当mayInterrupt 这个标记被设置，因此包装了这个 Future
+//         * The Future returned by Observable.toBlocking().toFuture() does not implement the
+//         * interruption of the execution thread when the "mayInterrupt" flag of Future.cancel(boolean) is set to true;
+//        * thus, to comply with the contract of Future, we must wrap around it.
+//
+//
+		1.同步的
+           	castToExecutable(invokable, executionType).execute();//先把可调用的，转换成可执行的在执行进入到HystrixCommand的execute()
+        2.异步的
+			executable.queue();
+        3.OBSERVABLE的
+			ObservableExecutionMode.EAGER == metaHolder.getObservableExecutionMode() ? observable.observe() : observable.toObservable();
 			queue().
-                final Future<R> delegate = toObservable().toBlocking().toFuture();//command转成一个RxJava可观察的Observable 返回一个Future对象，
+                final Future<R> delegate = toObservable().
+                	//doOnCompleted handler already did all of the SUCCESS work
+        			//doOnError handler already did all of the FAILURE/TIMEOUT/REJECTION/BAD_REQUEST work
+                	terminateCommandCleanup(Class=Action0)
+                	//mark the command as CANCELLED and store the latency (in addition to standard cleanup)
+                	unsubscribeCommandCleanup(Class=Action0)
+                	applyHystrixSemantics ( applyHystrixSemantics= Func0<Observable<R>>{
+                        applyHystrixSemantics(_cmd);
+                        	executionHook.onStart(_cmd);
+                        	circuitBreaker.attemptExecution()
+                                isAfterSleepWindow()
+                                	currentTime > circuitOpenTime + sleepWindowTime;
+                        
+                    } )
+                	wrapWithAllOnNextHooks( class=Func1)
+                	fireOnCompletedHook( class=Action0)
+                	return Observable.defer(new Func0<Observable<R>>() {
+                    	commandStartTimestamp = System.currentTimeMillis();
+                        properties.requestLogEnabled().get()
+                        // log this command execution regardless of what happened
+                        requestCacheEnabled = isRequestCachingEnabled();//判断是否要缓存，当设置了requestCacheEnabled 默认为true。所以只需要设置为cacheKey就能缓存。
+                        Observable<R> hystrixObservable =
+                        Observable.defer(applyHystrixSemantics)//返回一个可以观察的Hystrix。Hystrix的应用逻辑就在这里
+                           
+                                .map(wrapWithAllOnNextHooks);
+                        
+                        
+                	}）
+         
+                toBlocking().toFuture();//command转成一个RxJava可观察的Observable 返回一个Future对象，
             get();
 
 			
